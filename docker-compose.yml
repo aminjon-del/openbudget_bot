@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: openbudget_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secretpassword
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  bot:
+    build: .
+    restart: always
+    depends_on:
+      - db
+    environment:
+      BOT_TOKEN: "SIZNING_BOT_TOKENINGIZ"
+      ADMIN_ID: "SIZNING_ADMIN_ID"
+      SHTAB_GROUP_ID: "-100123456789"
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: openbudget_db
+      DB_USER: postgres
+      DB_PASS: secretpassword
+
+volumes:
+  pgdata:F
