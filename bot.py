@@ -59,7 +59,8 @@ async def reg_name(message: types.Message, state: FSMContext):
     await state.set_state(RegState.role)
 
 @dp.callback_query(RegState.role, F.data.startswith("role_"))
-async def reg_role(callback: types.CallbackQuery, state: StateContext):
+# TO‘G‘RI QATOR:
+async def reg_role(callback: types.CallbackQuery, state: FSMContext):
     role = callback.data.split("_")[1]
     data = await state.get_data()
     
