@@ -1,10 +1,13 @@
 import asyncio
 import io
+import sys
+import logging
 import pandas as pd
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton, BufferedInputFile
@@ -13,8 +16,14 @@ from aiogram.types import (
 from config import BOT_TOKEN, ADMIN_ID, SHTAB_GROUP_ID
 import database as db
 
+logging.basicConfig(level=logging.INFO)
+
+if not BOT_TOKEN:
+    logging.error("BOT_TOKEN aniqlanmadi! Iltimos, Environment Variable sozlamasini tekshiring.")
+    sys.exit(1)
+
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
 class RegState(StatesGroup):
     full_name = State()
@@ -25,7 +34,7 @@ class VoteState(StatesGroup):
     captcha = State()
     sms = State()
 
-def main_kb(is_admin=False):
+def main_kb(is_admin: bool = False):
     kb = [
         [KeyboardButton(text="➕ Yangi ovoz kiritish")],
         [KeyboardButton(text="📊 Mening natijalarim"), KeyboardButton(text="🏆 TOP-30 Reyting")]
@@ -36,6 +45,7 @@ def main_kb(is_admin=False):
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
     user = await db.get_user(message.from_user.id)
     if user:
         await message.answer(
@@ -49,28 +59,33 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
 @dp.message(RegState.full_name)
 async def reg_name(message: types.Message, state: FSMContext):
-    await state.update_data(full_name=message.text.strip())
+    name = message.text.strip()
+    if len(name) < 3:
+        await message.answer("Iltimos, haqiqiy ism va familiyangizni kiriting:")
+        return
     
+    await state.update_data(full_name=name)
     role_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💵 Pullik agent", callback_data="role_Pullik agent")],
-        [InlineKeyboardButton(text="🤝 Volontyor (Ko'ngilli)", callback_data="role_Volontyor")]
+        [InlineKeyboardButton(text="💵 Pullik agent", callback_data="setrole_Pullik agent")],
+        [InlineKeyboardButton(text="🤝 Volontyor (Ko'ngilli)", callback_data="setrole_Volontyor")]
     ])
     await message.answer("Faoliyat turini tanlang:", reply_markup=role_kb)
     await state.set_state(RegState.role)
 
-@dp.callback_query(RegState.role, F.data.startswith("role_"))
-# TO‘G‘RI QATOR:
+@dp.callback_query(RegState.role, F.data.startswith("setrole_"))
 async def reg_role(callback: types.CallbackQuery, state: FSMContext):
     role = callback.data.split("_")[1]
     data = await state.get_data()
+    full_name = data.get('full_name', callback.from_user.full_name)
     
-    await db.add_user(callback.from_user.id, data['full_name'], role)
+    await db.add_user(callback.from_user.id, full_name, role)
     await state.clear()
     
     await callback.message.delete()
     await callback.message.answer(
-        f"Muvaffaqiyatli ro'yxatdan o'tdingiz!\n👤 Ism: {data['full_name']}\n📌 Turi: {role}",
-        reply_markup=main_kb(callback.from_user.id == ADMIN_ID)
+        f"Muvaffaqiyatli ro'yxatdan o'tdingiz!\n👤 Ism: **{full_name}**\n📌 Turi: **{role}**",
+        reply_markup=main_kb(callback.from_user.id == ADMIN_ID),
+        parse_mode="Markdown"
     )
 
 @dp.message(F.text == "➕ Yangi ovoz kiritish")
@@ -80,18 +95,18 @@ async def start_vote(message: types.Message, state: FSMContext):
 
 @dp.message(VoteState.phone)
 async def vote_phone(message: types.Message, state: FSMContext):
-    phone = message.text.strip().replace("+", "")
+    phone = message.text.strip().replace("+", "").replace(" ", "")
     if not phone.isdigit() or len(phone) < 9:
         await message.answer("❌ Noto'g'ri raqam formati. Qaytadan kiriting:")
         return
     
     await state.update_data(phone=phone)
-    # Bu yerda Open Budget'dan olingan Kapcha taqdim etiladi
-    await message.answer("Open Budget'dan olingan Kapcha kodini kiriting:\n*(Simulyatsiya: 4 xonali son)*")
+    await message.answer("Open Budget'dan olingan Kapcha kodini kiriting:")
     await state.set_state(VoteState.captcha)
 
 @dp.message(VoteState.captcha)
 async def vote_captcha(message: types.Message, state: FSMContext):
+    await state.update_data(captcha=message.text.strip())
     await message.answer("📱 Mijozga borgan SMS kodni kiriting:")
     await state.set_state(VoteState.sms)
 
@@ -101,10 +116,7 @@ async def vote_sms(message: types.Message, state: FSMContext):
     phone = data['phone']
     user = await db.get_user(message.from_user.id)
     
-    # 3 xil ehtimoliy natija simulyatsiyasi (Amalda Open Budget API statusini qaytaradi)
-    # Natija: 'Qabul qilindi', 'Rad etildi' yoki 'Jarayonda'
-    status = "Jarayonda"  # Test uchun
-    
+    status = "Jarayonda"
     vote_id = await db.add_vote(message.from_user.id, phone, status)
     await state.clear()
 
@@ -120,8 +132,8 @@ async def vote_sms(message: types.Message, state: FSMContext):
             reply_markup=main_kb(message.from_user.id == ADMIN_ID),
             parse_mode="Markdown"
         )
-    else:  # Jarayonda
-        if user['role'] == "Pullik agent":
+    else:
+        if user and user['role'] == "Pullik agent":
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔍 Shtabga tekshirish uchun yuborish", callback_data=f"shtab_{vote_id}")],
                 [InlineKeyboardButton(text="➕ Keyingi mijozga o'tish", callback_data="next_client")]
@@ -130,7 +142,7 @@ async def vote_sms(message: types.Message, state: FSMContext):
                 f"⏳ **OVOZ HOZIR 'JARAYONDA' STATUSIDA!**\n\n"
                 f"📱 Raqam: `+{phone}`\n\n"
                 f"🚨 **DIQQAT! RAQAM EGASIGA PUL TO'LAMANG!**\n"
-                f"Tizim JSHSHIR bo'yicha tekshirmoqda. Baza tasdiqlamaguncha kutib turing.\n\n"
+                f"Tizim JSHSHIR bo'yicha tekshirmoqda. Baza tasdiqlamaguncha pul bermay turing.\n\n"
                 f"Shtabga tekshirish uchun yuborasizmi?"
             )
             await message.answer(text, reply_markup=kb, parse_mode="Markdown")
@@ -145,7 +157,12 @@ async def vote_sms(message: types.Message, state: FSMContext):
 async def to_shtab(callback: types.CallbackQuery):
     vote_id = int(callback.data.split("_")[1])
     user = await db.get_user(callback.from_user.id)
+    vote = await db.get_vote(vote_id)
     
+    if not vote:
+        await callback.answer("Ovoz ma'lumoti topilmadi.", show_alert=True)
+        return
+        
     shtab_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🟢 Qabul qilindi", callback_data=f"res_Qabul qilindi_{vote_id}_{callback.from_user.id}"),
@@ -153,17 +170,17 @@ async def to_shtab(callback: types.CallbackQuery):
         ]
     ])
     
-    async with db.pool.acquire() as conn:
-        v = await conn.fetchrow("SELECT phone FROM votes WHERE id = $1", vote_id)
-        phone = v['phone']
-        
-    await bot.send_message(
-        chat_id=SHTAB_GROUP_ID,
-        text=f"🔍 **TEKSHIRUV SO'ROVI**\n👤 Agent: {user['full_name']} (Pullik)\n📱 Raqam: `+{phone}`",
-        reply_markup=shtab_kb,
-        parse_mode="Markdown"
-    )
-    await callback.answer("Shtabga yuborildi! Keyingi mijoz bilan ishlayvering.", show_alert=True)
+    agent_name = user['full_name'] if user else "Agent"
+    try:
+        await bot.send_message(
+            chat_id=SHTAB_GROUP_ID,
+            text=f"🔍 **TEKSHIRUV SO'ROVI**\n👤 Agent: **{agent_name}** (Pullik)\n📱 Raqam: `+{vote['phone']}`",
+            reply_markup=shtab_kb,
+            parse_mode="Markdown"
+        )
+        await callback.answer("Shtabga yuborildi! Keyingi mijoz bilan ishlayvering.", show_alert=True)
+    except Exception as e:
+        await callback.answer("❌ Shtab guruhiga yuborishda xatolik yuz berdi.", show_alert=True)
 
 @dp.callback_query(F.data.startswith("res_"))
 async def shtab_res(callback: types.CallbackQuery):
@@ -175,9 +192,7 @@ async def shtab_res(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
     
-    msg = (
-        f"📢 **Shtab tekshiruvi yakunlandi!**\n📱 `+{vote['phone']}`\nNatija: **{status}**"
-    )
+    msg = f"📢 **Shtab tekshiruvi yakunlandi!**\n📱 `+{vote['phone']}`\nNatija: **{status}**"
     try:
         await bot.send_message(chat_id=int(agent_id), text=msg, parse_mode="Markdown")
     except:
@@ -233,7 +248,7 @@ async def admin_excel(message: types.Message):
 async def main():
     await db.create_pool()
     await db.init_db()
-    print("Bot muvaffaqiyatli ishga tushdi!")
+    logging.info("Bot muvaffaqiyatli ishga tushdi!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
