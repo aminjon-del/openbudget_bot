@@ -1,13 +1,13 @@
 import os
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "SIZNING_BOT_TOKENINGIZ")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
-SHTAB_GROUP_ID = int(os.getenv("SHTAB_GROUP_ID", "-100123456789"))
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+SHTAB_GROUP_ID = int(os.getenv("SHTAB_GROUP_ID", "0"))
 
-# Baza havolasi (Render uchun bittalik havola)
+# Render uchun PostgreSQL to'liq havola (Internal Database URL)
 DATABASE_URL = os.getenv("DATABASE_URL", None)
 
-# Alohida parametrlar (agar URL berilmasa)
+# Lokal yoki Docker-compose uchun parametrlar
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "openbudget_db")
